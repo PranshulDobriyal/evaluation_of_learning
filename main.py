@@ -1,23 +1,18 @@
-from curses import delay_output
 import numpy as np
 import pandas as pd
-from feature_selection import select_features
-from sklearn import tree
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.feature_selection import mutual_info_classif, GenericUnivariateSelect
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import KFold
 from sklearn.model_selection import StratifiedKFold
 from models import (get_RF, get_DT, get_knn, get_SVC, run_classifier)
-from helper_functions import (get_cv_performance_metrics, hr,\
-     get_sampler, plot_confusion_matrices, plot_roc)
+from helper_functions import (hr,\
+     get_sampler, plot_confusion_matrices, plot_roc, k_fold_cv)
 from sklearn.model_selection import GridSearchCV
 import pprint 
 import sys
 import pickle
 from sklearn.metrics import (make_scorer, recall_score)
-
+from sklearn.preprocessing import quantile_transform
 
 scorer = make_scorer(recall_score,pos_label=0)
 pp = pprint.PrettyPrinter(indent=4)
@@ -34,6 +29,16 @@ D_target = data.iloc[:, 13]
 D_target.loc[(D_target == "CL1") | (D_target == "CL0")] = 0
 D_target.loc[D_target != 0] = 1
 
+#Feature Selection
+
+transformer = GenericUnivariateSelect(mutual_info_classif, mode='k_best', param=11)
+cols = D_input_cols.columns
+D_input_cols = transformer.fit_transform(D_input_cols, D_target.astype(int))
+#print("Retained Features: ", transformer.get_feature_names_out(cols))
+
+#Scaling Data
+D_input_cols = quantile_transform(D_input_cols)
+
 #Convert to numpy.array
 D_target = np.array(D_target).astype('int')
 D_input_cols = np.array(D_input_cols)
@@ -43,8 +48,7 @@ D_input_cols = np.array(D_input_cols)
 #########################################################################################################
 
 hr()
-print("\tRunning 10-fold CV using all 4 classifiers.")
-hr()
+print("\t\t\tRunning 10-fold CV using all 4 classifiers.")
 
 param_dict = [
     {"min_samples_leaf": 2},
@@ -60,24 +64,19 @@ names = ["DecisionTree", "RandomForest", "SVC", "k-NN"]
 cv = KFold(n_splits=10, random_state=1, shuffle=True)
 strat_cv = StratifiedKFold(n_splits=10, random_state=1, shuffle=True)
 acc= []
-std = []
 strat_acc = []
-strat_std = []
 for i in range(len(classifiers)):
     classifier = classifiers[i](param_dict[i])
-    norm_metrics = get_cv_performance_metrics(classifier, D_input_cols, D_target, cv, score="accuracy")
-    strat_metrics = get_cv_performance_metrics(classifier, D_input_cols, D_target, strat_cv, score="accuracy")
-    acc.append("%.4f"%norm_metrics["Mean Score"])
-    std.append("%.4f"%norm_metrics["Std Dev"])
-    strat_acc.append("%.4f"%strat_metrics["Mean Score"])
-    strat_std.append("%.4f"%strat_metrics["Std Dev"])
+    score = k_fold_cv(classifier, None, D_input_cols, D_target, cv, score_name="balanced_accuracy")
+    strat_score = k_fold_cv(classifier, None, D_input_cols, D_target, strat_cv, score_name="balanced_accuracy")
+    acc.append(score)
+    strat_acc.append(strat_score)
 
 for i in range(len(names)):
     hr()
-    print("\t", names[i])
-    hr()
-    print(f"\nMean Accuracy: {acc[i]}\nStd Dev: {std[i]}")
-    print(f"Stratified C.V: ==> \nMean Accuracy: {strat_acc[i]}\nStd Dev: {strat_std[i]}")
+    print(names[i])
+    print(f"\nMean Balanced Accuracy for 10 fold CV: {acc[i]}")
+    print(f"\nMean Balanced Accuracy for Stratified 10 fold CV: {strat_acc[i]}")
 hr()
 
 
@@ -116,14 +115,13 @@ def generate_metric_matrix():
         for name, param in zip(sampler_names, params):
             keys = list(param.keys())
             if name not in sampler_metrics[names[i]].keys():
-                sampler_metrics[names[i]][name] = {"TNR": [], "param": []}
+                sampler_metrics[names[i]][name] = {"Score": [], "param": []}
 
             if len(keys) == 1:
                 for val in param[keys[0]]:
                     sampler = get_sampler(name, {keys[0]: val})
-                    X_sampled, y_sampled = sampler.fit_resample(D_input_cols, D_target)
-                    m = get_cv_performance_metrics(classifier, X_sampled, y_sampled, cv)
-                    sampler_metrics[names[i]][name]["TNR"].append(["%.4f"%m["Mean Score"], "%.4f"%m["Std Dev"]])
+                    sampler_metrics[names[i]][name]["Score"].append(k_fold_cv(classifier, sampler,\
+                         X, y, strat_cv, "balanced_accuracy"))
                     sampler_metrics[names[i]][name]["param"].append({keys[0]: val})
 
             else:
@@ -132,23 +130,24 @@ def generate_metric_matrix():
                         print("-", end=" ")
                         sys.stdout.flush()
                         sampler = get_sampler(name, {keys[0]: v1, keys[1]: v2})
-                        X_sampled, y_sampled = sampler.fit_resample(X, y)
-                        m = get_cv_performance_metrics(classifier, X_sampled, y_sampled, cv)
-                        sampler_metrics[names[i]][name]["TNR"].append(["%.4f"%m["Mean Score"], "%.4f"%m["Std Dev"]])
                         sampler_metrics[names[i]][name]["param"].append({keys[0]: v1, keys[1]: v2})
-                        
+                        sampler_metrics[names[i]][name]["Score"].append(k_fold_cv(classifier, \
+                            sampler, X, y, strat_cv, "balanced_accuracy"))
+
     # Save the dictionary to file
     with open('metric_dict.pkl', 'wb') as f:
         pickle.dump(sampler_metrics, f)
 
 #Run the below command only when metric_matrix is to be generated
+
 #generate_metric_matrix()
 
 
 ############################################## Construct DB1  ################################################
 
-# We know from the generated matrix that RandomOversampler with a sampling_strategy of 1 gives the best TNR on D
-sampler = get_sampler("RandomOverSampler", {"sampling_strategy": 1})
+# We know from the generated matrix that SMOTE with a sampling_strategy of 1 and k_neighbours = 2
+#  gives the best balanced_accuracy on D
+sampler = get_sampler("SMOTE", {"sampling_strategy": 1, "k_neighbors": 7})
 
 DB1_X, DB1_y = sampler.fit_resample(X, y)
 
@@ -202,7 +201,7 @@ def run_search():
     best_params = {} 
     for i in range(len(classifiers)):
         # Using GridSearch to get the best combination of parameters
-        classifier = GridSearchCV(classifiers[i](), classifier_param_dict[i], verbose=1, scoring="f1")
+        classifier = GridSearchCV(classifiers[i](), classifier_param_dict[i], verbose=1, scoring="balanced_accuracy")
         classifier.fit(X_train, y_train)
         best_params[names[i]] = classifier.best_params_
 
@@ -256,16 +255,15 @@ def generate_undersampling_metric_matrix():
         for name, param in zip(sampler_names, params):
             keys = list(param.keys())
             if name not in sampler_metrics[names[i]].keys():
-                sampler_metrics[names[i]][name] = {"TNR": [], "param": []}
+                sampler_metrics[names[i]][name] = {"Score": [], "param": []}
 
             for v1 in param[keys[0]]:
                 for v2 in param[keys[1]]:
                     print("-", end=" ")
                     sys.stdout.flush()
                     sampler = get_sampler(name, {keys[0]: v1, keys[1]: v2})
-                    X_sampled, y_sampled = sampler.fit_resample(D_input_cols, D_target)
-                    m = get_cv_performance_metrics(classifier, X_sampled, y_sampled, cv, score="balanced_accuracy")
-                    sampler_metrics[names[i]][name]["TNR"].append(["%.4f"%m["Mean Score"], "%.4f"%m["Std Dev"]])
+                    sampler_metrics[names[i]][name]["Score"].append(k_fold_cv(classifier, sampler,\
+                         X, y, strat_cv, "balanced_accuracy"))
                     sampler_metrics[names[i]][name]["param"].append({keys[0]: v1, keys[1]: v2})
                     
     # Save the dictionary to file
@@ -277,10 +275,10 @@ def generate_undersampling_metric_matrix():
 
 ################################################ Creating DB2 ###############################################
 
-# We know from the generated matrix that Near Miss with 'sampling_strategy': 0.9 and n_neighbour = 5 
+# We know from the generated matrix that Instance Hardness Threshold Sampler with sampling strategy of 0.7 and cv = 3
 # gives the best overall C.V accuracy
 
-sampler = get_sampler("NearMiss", {'sampling_strategy': 0.9, 'n_neighbors': 5})
+sampler = get_sampler("InstanceHardnessThreshold", {'cv': 3, 'sampling_strategy': 0.9})
 
 DB2_X, DB2_y = sampler.fit_resample(D_input_cols, D_target)
 print("\n\nDB2: Number of + class examples = ", np.count_nonzero(DB2_y))
@@ -340,7 +338,7 @@ params = {
     'solver': ['sgd', 'adam'],
     'alpha': [0.0001, 0.01, 0.1],
     'learning_rate': ['constant','adaptive'],
-    'max_iter': [5000]
+    'max_iter': [2000]
     }
 
 def run_MLP(X, y, dataset_name):
@@ -364,9 +362,9 @@ def run_MLP(X, y, dataset_name):
     plot_roc("MLP", met["ROC"], dataset_name)
 
 # Uncomment the lines below to run MLP on Datasets D, DB1, and DB2
-# run_MLP(D_input_cols, D_target, "D")
-# run_MLP(DB1_X, DB1_y, "DB-1")
-# run_MLP(DB2_X, DB2_y, "DB-2")
+run_MLP(D_input_cols, D_target, "D")
+run_MLP(DB1_X, DB1_y, "DB-1")
+run_MLP(DB2_X, DB2_y, "DB-2")
 
 # Gradient Boosting ==>
 from sklearn.ensemble import GradientBoostingClassifier
@@ -374,11 +372,11 @@ from sklearn.ensemble import GradientBoostingClassifier
 
 params = {
     "loss": ["log_loss", "exponential"],
-    'criterion': ['friedman_mse', 'squared_error', 'mse'],
+    'criterion': ['friedman_mse', 'squared_error'],
     'subsample': [0.1, 0.5, 1],
     'learning_rate': [0.0001, 0.01, 0.1],
-    'n_estimators': [50, 100, 500, 1000],
-    'min_weight_fraction_leaf': [0.0, 0.1, 0.5],
+    'n_estimators': [50, 100, 500],
+    'min_weight_fraction_leaf': [0.0, 0.1, 0.3, 0.5],
     'max_depth': [3, 5, 7],
     'max_features': ['sqrt', 'log2']
     }
@@ -404,6 +402,6 @@ def run_GB(X, y, dataset_name):
     plot_roc("GBC", met["ROC"], dataset_name)
 
 # Uncomment the lines below to run GradientBoostingClassifier on Datasets D, DB1, and DB2
-# run_GB(D_input_cols, D_target, "D")
-# run_GB(DB1_X, DB1_y, "DB-1")
-# run_GB(DB2_X, DB2_y, "DB-2")
+run_GB(D_input_cols, D_target, "D")
+run_GB(DB1_X, DB1_y, "DB-1")
+run_GB(DB2_X, DB2_y, "DB-2")

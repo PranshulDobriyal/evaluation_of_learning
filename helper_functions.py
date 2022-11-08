@@ -1,18 +1,16 @@
 
 from numpy import mean
 from numpy import std
+import numpy as np
 from sklearn.model_selection import cross_val_score
 from imblearn.over_sampling import (SMOTE, RandomOverSampler, ADASYN, SVMSMOTE)
 from imblearn.under_sampling import (RandomUnderSampler, NeighbourhoodCleaningRule, NearMiss, InstanceHardnessThreshold)
 from sklearn.metrics import ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import os
-from sklearn.metrics import roc_curve
-from sklearn.metrics import make_scorer
-from sklearn.metrics import recall_score
-# from sklearn.linear_model import LogisticRegression
-# from sklearn.datasets import make_classification
-# from sklearn.model_selection import KFold
+from sklearn.metrics import (roc_curve, make_scorer, recall_score, \
+    balanced_accuracy_score, accuracy_score, f1_score, roc_auc_score)
+
 
 
 # def specificity(y_true, y_pred):
@@ -21,6 +19,32 @@ from sklearn.metrics import recall_score
 #     return sp
 
 scorer = make_scorer(recall_score,pos_label=0)
+
+
+def k_fold_cv(classifier, sampler,  X, y, cv, score_name="accuracy"):
+    scorers = {
+        "accuracy": accuracy_score,
+        "recall": recall_score,
+        "f1": f1_score,
+        "roc_auc": roc_auc_score,
+        "balanced_accuracy": balanced_accuracy_score
+    }
+
+    scores = []
+    for train_folds_idx, val_fold_idx in cv.split(X, y):
+        X_train_fold, y_train_fold = X[train_folds_idx], y[train_folds_idx]
+        X_val_fold, y_val_fold = X[val_fold_idx], y[val_fold_idx]
+        if sampler is None:
+            X_sampled_train, y_sampled_train = X_train_fold, y_train_fold
+        else:
+            X_sampled_train, y_sampled_train = sampler.fit_resample(X_train_fold, y_train_fold)
+        model_obj = classifier.fit(X_sampled_train, y_sampled_train)
+        score = scorers[score_name](y_val_fold, model_obj.predict(X_val_fold))
+        scores.append(score)
+
+    return np.array(scores).mean()
+
+
 
 def hr():
     print("\n", "#"*100, "\n")
@@ -67,7 +91,7 @@ def plot_confusion_matrices(path, data, name):
         
         fig = ConfusionMatrixDisplay(confusion_matrix=confusion[1], display_labels=clf.classes_)
         fig.plot()
-        fig.ax_.set_title(f"Test Accuracy: {test_acc}\nPrecision: {precision}\nSpecificity (TNR): {sp}",\
+        fig.ax_.set_title(f"Test Accuracy: {test_acc}\nPrecision: {precision}\nSpecificity (TNR): {sp}\nBalanced Accuracy: {data['bal_acc']}",\
             fontsize=8)
         test_path = f"{path}/Test"
         if not os.path.isdir(test_path):

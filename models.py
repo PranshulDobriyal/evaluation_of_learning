@@ -1,3 +1,4 @@
+from numpy import average
 from sklearn import tree
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
@@ -5,9 +6,21 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 from sklearn import metrics
-from sklearn.metrics import precision_score
-from sklearn.metrics import recall_score
-from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import (precision_score, balanced_accuracy_score)
+from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+
+def get_MLP(params=None):
+    if params == None:
+        return MLPClassifier()
+    
+    return MLPClassifier(**params)
+
+def get_GBC(params=None):
+    if params == None:
+        return GradientBoostingClassifier()
+
+    return GradientBoostingClassifier(**params)
 
 def get_RF(params=None):
     """
@@ -71,7 +84,7 @@ def run_classifier(classifier, input_columns, output_column, test_input_col=None
     if split:            
         #Split the data into Train (67%) and Test (33%) Set
         X_train, X_test, y_train, y_test = train_test_split(input_columns,\
-            output_column, test_size = 0.33, random_state = 5)
+            output_column, test_size = 0.33, random_state = 5, stratify=output_column)
     else:
         X_train = input_columns
         y_train = output_column
@@ -106,13 +119,14 @@ def run_classifier(classifier, input_columns, output_column, test_input_col=None
     precision = precision_score(y_test, y_pred_test, average='binary')
     specificity = tn/(tn+fp)
     accuracy = [train_acc, test_acc, precision, specificity]
-
+    bal_acc = balanced_accuracy_score(y_test, y_pred_test)
     clf = classifier
 
     return {
         "Classifier": clf,
         "Confusion": confusion,
         "Accuracy": accuracy,
-        "ROC": roc
+        "ROC": roc,
+        "bal_acc": bal_acc
     }
 
