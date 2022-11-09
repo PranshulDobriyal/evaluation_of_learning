@@ -9,7 +9,7 @@ from sklearn.metrics import ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import os
 from sklearn.metrics import (roc_curve, make_scorer, recall_score, \
-    balanced_accuracy_score, accuracy_score, f1_score, roc_auc_score)
+    balanced_accuracy_score, accuracy_score, f1_score, roc_auc_score, fbeta_score)
 
 
 
@@ -20,6 +20,12 @@ from sklearn.metrics import (roc_curve, make_scorer, recall_score, \
 
 scorer = make_scorer(recall_score,pos_label=0)
 
+def f2_score(y_true, y_pred):
+    f2_score = fbeta_score(y_true, y_pred, beta=2)
+    return f2_score
+
+def f2_scorer():
+    return make_scorer(f2_score)
 
 def k_fold_cv(classifier, sampler,  X, y, cv, score_name="accuracy"):
     scorers = {
@@ -27,7 +33,8 @@ def k_fold_cv(classifier, sampler,  X, y, cv, score_name="accuracy"):
         "recall": recall_score,
         "f1": f1_score,
         "roc_auc": roc_auc_score,
-        "balanced_accuracy": balanced_accuracy_score
+        "balanced_accuracy": balanced_accuracy_score,
+        "f2": fbeta_score
     }
 
     scores = []
@@ -39,7 +46,10 @@ def k_fold_cv(classifier, sampler,  X, y, cv, score_name="accuracy"):
         else:
             X_sampled_train, y_sampled_train = sampler.fit_resample(X_train_fold, y_train_fold)
         model_obj = classifier.fit(X_sampled_train, y_sampled_train)
-        score = scorers[score_name](y_val_fold, model_obj.predict(X_val_fold))
+        if score_name == "f2":
+            score = scorers[score_name](y_val_fold, model_obj.predict(X_val_fold), beta = 2)
+        else:
+            score = scorers[score_name](y_val_fold, model_obj.predict(X_val_fold))
         scores.append(score)
 
     return np.array(scores).mean()
@@ -74,7 +84,7 @@ def get_sampler(name, params):
     }
     return samplers[name](**params)
 
-def plot_confusion_matrices(path, data, name):
+def plot_confusion_matrices(path, data, name, cv_score=None, scorer_name = "Balanced Accuracy"):
     clf = data["Classifier"]
     confusion = data["Confusion"]
     train_acc, test_acc, precision, sp = data["Accuracy"]
@@ -91,8 +101,8 @@ def plot_confusion_matrices(path, data, name):
         
         fig = ConfusionMatrixDisplay(confusion_matrix=confusion[1], display_labels=clf.classes_)
         fig.plot()
-        fig.ax_.set_title(f"Test Accuracy: {test_acc}\nPrecision: {precision}\nSpecificity (TNR): {sp}\nBalanced Accuracy: {data['bal_acc']}",\
-            fontsize=8)
+        fig.ax_.set_title(f"Test Accuracy: {test_acc}\n {scorer_name} on CV: {cv_score}\n\
+            Precision: {precision}\nBalanced Accuracy: {data['bal_acc']}", fontsize=8)
         test_path = f"{path}/Test"
         if not os.path.isdir(test_path):
             os.makedirs(test_path)

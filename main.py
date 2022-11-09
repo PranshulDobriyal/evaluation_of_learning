@@ -54,7 +54,7 @@ param_dict = [
     {"min_samples_leaf": 2},
     {"max_depth": 5, "random_state": 0},
     {},
-    {"n_neighbors": 3}]
+    {"n_neighbors": 5}]
 
 classifiers = [get_DT, get_RF, get_SVC, get_knn]
 names = ["DecisionTree", "RandomForest", "SVC", "k-NN"]
@@ -67,8 +67,8 @@ acc= []
 strat_acc = []
 for i in range(len(classifiers)):
     classifier = classifiers[i](param_dict[i])
-    score = k_fold_cv(classifier, None, D_input_cols, D_target, cv, score_name="balanced_accuracy")
-    strat_score = k_fold_cv(classifier, None, D_input_cols, D_target, strat_cv, score_name="balanced_accuracy")
+    score = k_fold_cv(classifier, None, D_input_cols, D_target, cv, score_name="accuracy")
+    strat_score = k_fold_cv(classifier, None, D_input_cols, D_target, strat_cv, score_name="accuracy")
     acc.append(score)
     strat_acc.append(strat_score)
 
@@ -135,7 +135,7 @@ def generate_metric_matrix():
                             sampler, X, y, strat_cv, "balanced_accuracy"))
 
     # Save the dictionary to file
-    with open('metric_dict.pkl', 'wb') as f:
+    with open('pickled_objects/metric_dict.pkl', 'wb') as f:
         pickle.dump(sampler_metrics, f)
 
 #Run the below command only when metric_matrix is to be generated
@@ -145,7 +145,7 @@ def generate_metric_matrix():
 
 ############################################## Construct DB1  ################################################
 
-# We know from the generated matrix that SMOTE with a sampling_strategy of 1 and k_neighbours = 2
+# We know from the generated matrix that SMOTE with a sampling_strategy of 1 and k_neighbours = 7
 #  gives the best balanced_accuracy on D
 sampler = get_sampler("SMOTE", {"sampling_strategy": 1, "k_neighbors": 7})
 
@@ -205,26 +205,28 @@ def run_search():
         classifier.fit(X_train, y_train)
         best_params[names[i]] = classifier.best_params_
 
-    with open('best_over_param_dict.pkl', 'wb') as f:
+    with open('pickled_objects/best_over_param_dict.pkl', 'wb') as f:
         pickle.dump(best_params, f)
 
 # Run the function below to generate a dictionary containing the best parameters for all the classifiers
-#run_search()
+run_search()
 
 # Load the best parameters
-with open('best_over_param_dict.pkl', 'rb') as f:
+with open('pickled_objects/best_over_param_dict.pkl', 'rb') as f:
     best_param = pickle.load(f)
 
 
 ############################################## Retraining the 4 classifiers with DB1 ###############################################
+def retrain_on_db1():
+    for i in range(len(classifiers)):
+        name = names[i]
+        classifier = classifiers[i](best_param[names[i]])
+        met = run_classifier(classifier, X_train, y_train, X_test, y_test, split=False)
+        cv_score = k_fold_cv(classifier, None, DB1_X, DB1_y, strat_cv, "balanced_accuracy")
+        plot_confusion_matrices("Plots/algos_on_DB1", met, name, cv_score)
+        plot_roc("Plots/algos_on_DB1", met["ROC"], name)
 
-# for i in range(len(classifiers)):
-#     name = names[i]
-#     classifier = classifiers[i](best_param[names[i]])
-#     met = run_classifier(classifier, X_train, y_train, X_test, y_test, split=False)
-#     plot_confusion_matrices("algos_on_DB1", met, name)
-#     plot_roc("algos_on_DB1", met["ROC"], name)
-
+retrain_on_db1
 
 #########################################################################################################
                             # TASK 3&4: Undersampling and Training
@@ -267,7 +269,7 @@ def generate_undersampling_metric_matrix():
                     sampler_metrics[names[i]][name]["param"].append({keys[0]: v1, keys[1]: v2})
                     
     # Save the dictionary to file
-    with open('undersampling_metric_dict.pkl', 'wb') as f:
+    with open('pickled_objects/undersampling_metric_dict.pkl', 'wb') as f:
         pickle.dump(sampler_metrics, f)
 
 # Run this to generate the metric matrix
@@ -301,14 +303,14 @@ def run_search():
         classifier.fit(X_train, y_train)
         best_params[names[i]] = classifier.best_params_
 
-    with open('best_under_param_dict.pkl', 'wb') as f:
+    with open('pickled_objects/best_under_param_dict.pkl', 'wb') as f:
         pickle.dump(best_params, f)
 
 # Run the below function to generate param metrics
-#run_search()
+run_search()
 
 # Load the best parameters
-with open('best_under_param_dict.pkl', 'rb') as f:
+with open('pickled_objects/best_under_param_dict.pkl', 'rb') as f:
     best_param = pickle.load(f)
     print("\n\nLoaded Best Params for Classifiers on DB2\n\n")
 #################################### Retraining the 4 classifiers with DB2 ###################################
@@ -320,10 +322,11 @@ def retrain_on_DB2():
         name = names[i]
         classifier = classifiers[i](best_param[names[i]])
         met = run_classifier(classifier, X_train, y_train, X_test, y_test, split=False)
-        plot_confusion_matrices("algos_on_DB2", met, name)
-        plot_roc("algos_on_DB2", met["ROC"], name)
+        cv_score = k_fold_cv(classifier, None, DB2_X, DB2_y, strat_cv, "balanced_accuracy")
+        plot_confusion_matrices("Plots/algos_on_DB2", met, name, cv_score)
+        plot_roc("Plots/algos_on_DB2", met["ROC"], name)
 
-#retrain_on_DB2()
+retrain_on_DB2()
 #########################################################################################################
                             # TASK 5: Training MLP and Gradient Boosting
 #########################################################################################################
@@ -346,25 +349,32 @@ def run_MLP(X, y, dataset_name):
     # hr()
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=1, test_size=0.33)
     mlp = MLPClassifier()
-    classifier = GridSearchCV(mlp, params, verbose=2, scoring="balanced_accuracy")
-    classifier.fit(X_train, y_train)
-    best_param = classifier.best_params_
-    
-    # best_param = {'activation': 'relu', 'alpha': 0.01, 'hidden_layer_sizes': (64, 32, 8),\
-    #      'learning_rate': 'adaptive', 'max_iter': 10000, 'solver': 'adam'}
 
-    print("\n\nBest Parameters for MLP on Dataset: ", dataset_name)
-    print(best_param)
+    def get_param():
+        classifier = GridSearchCV(mlp, params, verbose=2, scoring="balanced_accuracy")
+        classifier.fit(X_train, y_train)
+        best_param = classifier.best_params_
+        print("\n\nBest Parameters for MLP on Dataset: ", dataset_name)
+        print(best_param)
+
+        with open(f'pickled_objects/MLP_best_param_{dataset_name}.pkl', 'wb') as f:
+            pickle.dump(best_param, f)
+
+    get_param()
+
+    with open(f'pickled_objects/MLP_best_param_{dataset_name}.pkl', 'rb') as f:
+        best_param = pickle.load(f)
 
     classifier = MLPClassifier(**best_param)
     met = run_classifier(classifier, X_train, y_train, X_test, y_test, split=False)
-    plot_confusion_matrices("MLP", met, dataset_name)
-    plot_roc("MLP", met["ROC"], dataset_name)
+    cv_score = k_fold_cv(classifier, None, X, y, strat_cv, "balanced_accuracy")
+    plot_confusion_matrices("Plots/MLP", met, dataset_name, cv_score)
+    plot_roc("Plots/MLP", met["ROC"], dataset_name)
 
 # Uncomment the lines below to run MLP on Datasets D, DB1, and DB2
 run_MLP(D_input_cols, D_target, "D")
-run_MLP(DB1_X, DB1_y, "DB-1")
-run_MLP(DB2_X, DB2_y, "DB-2")
+run_MLP(DB1_X, DB1_y, "DB_1")
+run_MLP(DB2_X, DB2_y, "DB_2")
 
 # Gradient Boosting ==>
 from sklearn.ensemble import GradientBoostingClassifier
@@ -386,22 +396,29 @@ def run_GB(X, y, dataset_name):
     # hr()
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=1, test_size=0.33)
     gbc = GradientBoostingClassifier()
-    classifier = GridSearchCV(gbc, params, verbose=2, scoring="balanced_accuracy")
-    classifier.fit(X_train, y_train)
-    best_param = classifier.best_params_
-    
-    # best_param = {'activation': 'relu', 'alpha': 0.01, 'hidden_layer_sizes': (64, 32, 8),\
-    #      'learning_rate': 'adaptive', 'max_iter': 10000, 'solver': 'adam'}
+
+    def get_param():    
+        classifier = GridSearchCV(gbc, params, verbose=2, scoring="balanced_accuracy")
+        classifier.fit(X_train, y_train)
+        best_param = classifier.best_params_
+        with open(f'pickled_objects/GB_best_param_{dataset_name}.pkl', 'wb') as f:
+            pickle.dump(best_param, f)
+
+    get_param()
+
+    with open(f'pickled_objects/GB_best_param_{dataset_name}.pkl', 'rb') as f:
+        best_param = pickle.load(f)
 
     print("\n\nBest Parameters for GradientBoostingClassifier on Dataset: ", dataset_name)
     print(best_param)
 
     classifier = GradientBoostingClassifier(**best_param)
     met = run_classifier(classifier, X_train, y_train, X_test, y_test, split=False)
-    plot_confusion_matrices("GBC", met, dataset_name)
-    plot_roc("GBC", met["ROC"], dataset_name)
+    cv_score = k_fold_cv(classifier, None, X, y, strat_cv, "balanced_accuracy")
+    plot_confusion_matrices("Plots/GBC", met, dataset_name, cv_score)
+    plot_roc("Plots/GBC", met["ROC"], dataset_name)
 
 # Uncomment the lines below to run GradientBoostingClassifier on Datasets D, DB1, and DB2
 run_GB(D_input_cols, D_target, "D")
-run_GB(DB1_X, DB1_y, "DB-1")
-run_GB(DB2_X, DB2_y, "DB-2")
+run_GB(DB1_X, DB1_y, "DB_1")
+run_GB(DB2_X, DB2_y, "DB_2")
